@@ -1,0 +1,28 @@
+replicaCount: 1
+
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  tag: "stable-alpine"
+
+# Keep this block even if you don't create a SA
+serviceAccount:
+  create: false
+  annotations: {}
+  name: ""
+
+service:
+  type: LoadBalancer
+  port: 80
+
+ingress:
+  enabled: false
+
+# Explicitly disable Gateway API HTTPRoute to avoid nil pointer issues
+httpRoute:
+  enabled: false
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
