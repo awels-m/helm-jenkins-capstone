@@ -1,80 +1,93 @@
 pipeline {
   agent any
 
+  options {
+    ansiColor('xterm')
+    timestamps()
+  }
+
   environment {
-    // Use full paths for Apple Silicon Homebrew tools
-    KUBECTL = '/opt/homebrew/bin/kubectl'
-    HELM    = '/opt/homebrew/bin/helm'
+    // Ensure Homebrew-installed tools are visible to Jenkins on macOS
+    PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+
+    // ----- Adjust these if you like -----
     NAMESPACE = 'capstone'
     RELEASE   = 'demo'
     CHART_DIR = 'webapp'
   }
 
-  options {
-    timestamps()
-    ansiColor('xterm')
-  }
-
   stages {
     stage('Checkout') {
       steps {
-        checkout scm
-        sh 'echo "Repo checked out at: $(pwd)" && ls -la'
+        // If using SCM definition, Jenkins will checkout for you.
+        // If using "Pipeline script" and you have files on this machine, this just lists them.
+        sh '''
+          set -euxo pipefail
+          pwd
+          ls -la
+        '''
       }
     }
 
-    stage('Kube Context Check') {
+    stage('Kubernetes Context') {
       steps {
-        sh """
-          ${KUBECTL} config current-context
-          ${KUBECTL} get nodes
-          ${KUBECTL} get ns || true
-          ${KUBECTL} create namespace ${NAMESPACE} || true
-        """
+        sh '''
+          set -euxo pipefail
+          echo "kubectl version:"; kubectl version --client
+          echo "helm version:"; helm version
+          echo "current kubectl context:"; kubectl config current-context || true
+
+          # Ensure target namespace exists
+          kubectl get ns "$NAMESPACE" >/dev/null 2>&1 || kubectl create ns "$NAMESPACE"
+
+          echo "Cluster nodes:"
+          kubectl get nodes -o wide
+        '''
       }
     }
 
     stage('Helm Lint & Template') {
       steps {
-        sh """
-          ${HELM} lint ${CHART_DIR}
-          ${HELM} template ${RELEASE} ${CHART_DIR} --namespace ${NAMESPACE} | head -n 60
-        """
+        sh '''
+          set -euxo pipefail
+          helm lint "./$CHART_DIR"
+          echo "Rendering first lines of the manifest:"
+          helm template "$RELEASE" "./$CHART_DIR" | head -n 80
+        '''
       }
     }
 
-    stage('Deploy/Upgrade') {
+    stage('Deploy/Upgrade with Helm') {
       steps {
-        sh """
-          ${HELM} upgrade --install ${RELEASE} ${CHART_DIR} -n ${NAMESPACE}
-          ${KUBECTL} rollout status deploy/${RELEASE}-webapp -n ${NAMESPACE} --timeout=120s
-        """
+        sh '''
+          set -euxo pipefail
+
+          # Install or upgrade the release
+          helm upgrade --install "$RELEASE" "./$CHART_DIR" -n "$NAMESPACE"
+
+          # Wait for the deployment to become ready (named <release>-webapp by our chart)
+          kubectl rollout status deploy/"$RELEASE"-webapp -n "$NAMESPACE" --timeout=180s || true
+
+          echo "Workload and service summary:"
+          kubectl get pods,svc -n "$NAMESPACE" -o wide
+        '''
       }
     }
 
-    stage('Smoke Test') {
+    stage('How to access the app') {
       steps {
-        sh """
-          # Try to reach the service inside the cluster
-          ${KUBECTL} get svc -n ${NAMESPACE}
-          echo "If using port-forward, uncomment the lines below to curl:"
-          # ${KUBECTL} port-forward -n ${NAMESPACE} svc/${RELEASE}-webapp 8080:80 &
-          # PF_PID=$!
-          # sleep 3
-          # curl -s http://localhost:8080 | head -n 5
-          # kill $PF_PID
-        """
+        sh '''
+          set -euxo pipefail
+          echo "If using minikube: run 'minikube tunnel' in another terminal for EXTERNAL-IP."
+          echo "Otherwise, port-forward with:"
+          echo "kubectl -n $NAMESPACE port-forward svc/$RELEASE-webapp 8080:80"
+        '''
       }
     }
   }
 
   post {
-    success {
-      echo 'Deployment successful ✅'
-    }
-    failure {
-      echo 'Deployment failed ❌'
-    }
+    success { echo '✅ Deployment succeeded.' }
+    failure { echo '❌ Deployment failed. Open Console Output to see the failing command.' }
   }
 }
-
