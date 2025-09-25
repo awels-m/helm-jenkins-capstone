@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   options {
-    ansiColor('xterm')
+    // Removed ansiColor here to avoid plugin dependency
     timestamps()
   }
 
@@ -19,8 +19,6 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        // If using SCM definition, Jenkins will checkout for you.
-        // If using "Pipeline script" and you have files on this machine, this just lists them.
         sh '''
           set -euxo pipefail
           pwd
@@ -61,14 +59,8 @@ pipeline {
       steps {
         sh '''
           set -euxo pipefail
-
-          # Install or upgrade the release
           helm upgrade --install "$RELEASE" "./$CHART_DIR" -n "$NAMESPACE"
-
-          # Wait for the deployment to become ready (named <release>-webapp by our chart)
           kubectl rollout status deploy/"$RELEASE"-webapp -n "$NAMESPACE" --timeout=180s || true
-
-          echo "Workload and service summary:"
           kubectl get pods,svc -n "$NAMESPACE" -o wide
         '''
       }
@@ -91,3 +83,4 @@ pipeline {
     failure { echo '❌ Deployment failed. Open Console Output to see the failing command.' }
   }
 }
+
